@@ -13,3 +13,7 @@
         </iq:permissions>
         <iq:languages>
             <iq:language>zht</iq:language>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+    </iq:application>
+</iq:manifest>
