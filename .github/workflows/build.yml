@@ -10,27 +10,45 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      - name: Auto-generate Launcher Icon & Drawables XML
+        run: |
+          mkdir -p resources/drawables
+          cat << 'EOF' > resources/drawables/drawables.xml
+          <drawables>
+              <bitmap id="LauncherIcon" filename="launcher_icon.png" />
+          </drawables>
+          EOF
+          python3 -c '
+          import zlib, struct
+          w, h = 40, 40
+          raw = b"".join(b"\x00" + b"\x07\x24\x36\xff" * w for _ in range(h))
+          def chunk(tag, data):
+              return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
+          png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+          open("resources/drawables/launcher_icon.png", "wb").write(png)
+          '
 
       - name: Generate Developer Key
         run: |
           openssl genrsa -out developer_key.pem 4096
           openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
 
-      - name: Compile Fenix 7X WatchFace (.PRG)
-        uses: lindell/connect-iq-build-action@v1
-        with:
-          developer_key: developer_key.der
-          device: fenix7x
-          output_path: TacticalSAM.prg
+      - name: Download & Compile with Official Garmin Connect IQ SDK
+        run: |
+          mkdir -p garmin_sdk
+          wget -q "https://developer.garmin.com/downloads/connect-iq/sdks/connectiq-sdk-lin-7.4.3-2024-12-11-90ec25e45.zip" -O sdk.zip
+          unzip -q sdk.zip -d garmin_sdk
+          export PATH="$PWD/garmin_sdk/bin:$PATH"
+          monkeyc -d fenix7x -f monkey.jungle -o TacticalSAM.prg -y developer_key.der
 
       - name: Upload TacticalSAM.prg
         uses: actions/upload-artifact@v4
         with:
           name: Fenix7X-TacticalSAM-PRG
           path: TacticalSAM.prg
-
