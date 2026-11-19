@@ -6,11 +6,58 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: kalemena/connectiq:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Garmin SDK & Fenix 7X Device Config
+        run: |
+          mkdir -p "$HOME/.Garmin/ConnectIQ/Sdks" "$HOME/.Garmin/ConnectIQ/Devices/fenix7x"
+          python3 - << 'EOF'
+          import urllib.request, json, zipfile, io, os
+
+          base = "https://developer.garmin.com/downloads/connect-iq"
+          req = lambda u: urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+
+          # 1. 取得並下載最新版 Linux Connect IQ SDK
+          sdks = json.loads(urllib.request.urlopen(req(f"{base}/sdks/sdks.json")).read().decode())
+          latest_sdk = sdks[-1]
+          sdk_url = latest_sdk if isinstance(latest_sdk, str) else (latest_sdk.get("linux") or latest_sdk.get("url"))
+          if not sdk_url.startswith("http"):
+              sdk_url = f"{base}/sdks/{sdk_url}"
+          print("Downloading SDK:", sdk_url)
+          sdk_zip = urllib.request.urlopen(req(sdk_url)).read()
+          sdk_dir = os.path.expanduser("~/.Garmin/ConnectIQ/Sdks/current")
+          with zipfile.ZipFile(io.BytesIO(sdk_zip)) as zf:
+              zf.extractall(sdk_dir)
+
+          # 2. 取得並下載 fenix7x 裝置定義檔
+          devs = json.loads(urllib.request.urlopen(req(f"{base}/devices/devices.json")).read().decode())
+          f7x_entry = None
+          if isinstance(devs, dict):
+              f7x_entry = devs.get("fenix7x")
+          elif isinstance(devs, list):
+              for d in devs:
+                  if isinstance(d, dict) and (d.get("partNumber") == "fenix7x" or d.get("name") == "fenix7x" or "fenix7x" in str(d)):
+                      f7x_entry = d
+                      break
+          dev_url = f7x_entry if isinstance(f7x_entry, str) else (f7x_entry.get("url") or f7x_entry.get("device"))
+          if not dev_url.startswith("http"):
+              dev_url = f"{base}/devices/{dev_url}"
+          print("Downloading Device fenix7x:", dev_url)
+          dev_zip = urllib.request.urlopen(req(dev_url)).read()
+          dev_dir = os.path.expanduser("~/.Garmin/ConnectIQ/Devices/fenix7x")
+          with zipfile.ZipFile(io.BytesIO(dev_zip)) as zf:
+              zf.extractall(dev_dir)
+          EOF
+          chmod +x "$HOME/.Garmin/ConnectIQ/Sdks/current/bin/"*
+          echo "$HOME/.Garmin/ConnectIQ/Sdks/current/bin" >> $GITHUB_PATH
 
       - name: Auto-generate Launcher Icon & Drawables XML
         run: |
@@ -20,7 +67,7 @@ jobs:
               <bitmap id="LauncherIcon" filename="launcher_icon.png" />
           </drawables>
           EOF
-          python3 -c '
+          python3 - << 'EOF'
           import zlib, struct
           w, h = 40, 40
           raw = b"".join(b"\x00" + b"\x07\x24\x36\xff" * w for _ in range(h))
@@ -28,7 +75,7 @@ jobs:
               return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
           png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
           open("resources/drawables/launcher_icon.png", "wb").write(png)
-          '
+          EOF
 
       - name: Generate Developer Key
         run: |
